@@ -32,7 +32,7 @@ Defined in `contracts/subscription_vault/src/types.rs`:
 | `auto_renew` | `bool` | When `false`, the billing engine skips charges once the current interval elapses. Defaults to `true` on creation. See [auto_renew.md](auto_renew.md). |
 | `auto_renew_disabled_at` | `Option<u64>` | Ledger timestamp of the first `set_auto_renew(false)` call. Used to enforce the one-interval renewal window. `None` when auto-renewal is enabled. |
 
-The **status** field is the only one modified by the state machine. Other fields change only through specific operations: `prepaid_balance` and `last_payment_timestamp` change on deposit and charge; the rest are set at creation (or not changed). The `expiration` field is checked on every charge attempt; it does not trigger an automatic status change but blocks charging via `Error::SubscriptionExpired`.
+The **status** field is the only one modified by the state machine. Other fields change only through specific operations: `prepaid_balance` changes on deposit and successful charge, while `last_payment_timestamp` changes only on successful charge; the rest are set at creation (or not changed). The `expiration` field is checked on every charge attempt; it does not trigger an automatic status change but blocks charging via `Error::SubscriptionExpired`.
 
 ### Storage
 
@@ -78,6 +78,24 @@ The enum is defined in `contracts/subscription_vault/src/types.rs`. Transition r
 - **How entered:** Failed charge while `now < last_payment_timestamp + interval_seconds + grace_period`.
 - **How exited:** Successful charge or `resume_subscription` (with sufficient prepaid balance) → Active; later failed attempt after grace expiry → InsufficientBalance; `cancel_subscription` → Cancelled.
 - **Charges:** Allowed to re-attempt charging while grace is active.
+
+#### Exact `GracePeriod` → `InsufficientBalance` predicate
+
+On a failed charge attempt, the transition to `InsufficientBalance` occurs when
+the following inclusive predicate is true:
+
+```text
+now >= last_payment_timestamp + interval_seconds + grace_period_seconds
+```
+
+Here, `now` is the current ledger timestamp, `last_payment_timestamp` is the
+timestamp of the last successful payment, `interval_seconds` is the
+subscription billing interval, and `grace_period_seconds` is the configured
+grace duration. Equality is sufficient: the transition happens at the exact
+boundary, not only after it. If the predicate is false, the subscription stays
+in `GracePeriod` and a later eligible charge may retry. A zero grace duration
+makes the predicate true at the first underfunded eligible charge, so the
+subscription goes directly to `InsufficientBalance`.
 
 ---
 
@@ -156,6 +174,7 @@ flowchart LR
   Auth: admin.  
   Both delegate to `charge_one` in `contracts/subscription_vault/src/charge_core.rs`.
 - **Behavior:** Charges are attempted for **Active** and **GracePeriod** subscriptions. If `now < last_payment_timestamp + interval_seconds`, returns `Error::IntervalNotElapsed` (1001). On success, balance and `last_payment_timestamp` are updated and a charge statement is appended. On insufficient balance, no funds move and no statement is appended; instead status transitions to `GracePeriod` or `InsufficientBalance` and a charge-failed event is emitted.
+- **Deprecated plans:** A subscription linked to a deprecated plan cannot be charged (`Error::PlanDeprecated`, 4015). The subscriber must migrate it to a non-deprecated plan before charges can resume. Subscriptions not created from a plan template are unaffected.
 
 ### Pause / Resume / Cancel
 
@@ -203,6 +222,7 @@ From `contracts/subscription_vault/src/types.rs`. For the full canonical table w
 | 4002 | `NotActive` | Charge attempted on non-Active/non-GracePeriod subscription. |
 | 4003 | `SubscriptionExpired` | Charge attempted after the subscription's `expiration` timestamp. |
 | 4004 | `IntervalNotElapsed` | Charge attempted before interval elapsed. |
+| 4015 | `PlanDeprecated` | The subscription's linked plan is deprecated; migrate it before charging. |
 | 5001 | `InsufficientBalance` | Charge failed due to insufficient prepaid balance. |
 | 5003 | `BelowMinimumTopup` | Deposit is below the configured `min_topup` threshold. |
 

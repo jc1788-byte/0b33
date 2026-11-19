@@ -35,8 +35,12 @@ pub fn sub_total_accounted(env: &Env, token: &Address, amount: i128) -> Result<(
     Ok(())
 }
 
-/// Reads total accounted value
-pub fn get_total_accounted(env: &Env, token: &Address) -> i128 {
+/// Reads total accounted value for a registered token.
+pub fn get_total_accounted(env: &Env, token: &Address) -> Result<i128, Error> {
+    if !crate::admin::is_token_accepted(env, token) {
+        return Err(Error::InvalidToken);
+    }
+
     let key = DataKey::TotalAccounted(token.clone());
-    env.storage().instance().get(&key).unwrap_or(0i128)
+    Ok(env.storage().instance().get(&key).unwrap_or(0i128))
 }

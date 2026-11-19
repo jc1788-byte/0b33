@@ -97,7 +97,7 @@
 //! `src/accounting.rs` is not compiled into the crate — there is no
 //! `mod accounting;` declaration anywhere. `lib.rs:327` defines an inline
 //! `pub mod accounting` whose three functions ignore their arguments and whose
-//! `get_total_accounted` unconditionally returns `0`. Every
+//! `get_total_accounted` returns `0` for accepted tokens. Every
 //! `crate::accounting::add_total_accounted` / `sub_total_accounted` call in the
 //! charge and withdraw paths is therefore a no-op against the real
 //! `DataKey::TotalAccounted` storage.
@@ -224,7 +224,7 @@ fn setup(charge_budget: u32) -> Harness {
         &None::<soroban_sdk::Symbol>,
     );
 
-    client.deposit_funds(&sub_id, &subscriber, &funding, &None::<soroban_sdk::BytesN<32>>);
+    client.deposit_funds(&sub_id, &funding, &None::<soroban_sdk::BytesN<32>>);
 
     Harness {
         env,
@@ -608,7 +608,7 @@ fn xfail_refunds_double_count_on_withdraw() {
 /// (no `mod accounting;` exists), and the inline `pub mod accounting` at
 /// `lib.rs:327` stubs all three functions — `add_total_accounted` and
 /// `sub_total_accounted` ignore their arguments, and `get_total_accounted`
-/// always returns `0`. Every accounting call in the charge and withdraw paths
+/// returns `0` for accepted tokens. Every accounting call in the charge and withdraw paths
 /// is therefore a no-op against `DataKey::TotalAccounted`.
 ///
 /// Writing `assert_eq!(get_total_accounted(..), 0)` here would pass while
@@ -623,10 +623,11 @@ fn xfail_refunds_double_count_on_withdraw() {
 fn ignored_total_accounted_tracks_net_flow() {
     let mut h = setup(3);
 
-    // Guard: while the stub is in place `get_total_accounted` is hardwired to 0,
+    // Guard: while the stub is in place `get_total_accounted` is hardwired to 0
+    // for accepted tokens,
     // so every assertion below would pass vacuously. Delete this block on
     // purpose when wiring `accounting.rs` in.
-    if crate::accounting::get_total_accounted(&h.env, &h.token) == 0 {
+    if crate::accounting::get_total_accounted(&h.env, &h.token).unwrap() == 0 {
         return;
     }
 
@@ -645,7 +646,7 @@ fn ignored_total_accounted_tracks_net_flow() {
     // TotalAccounted is a global anchor: credits raise it, withdrawals and
     // refunds lower it. After a full drain the merchant's contribution is zero.
     assert_eq!(
-        crate::accounting::get_total_accounted(&h.env, &h.token),
+        crate::accounting::get_total_accounted(&h.env, &h.token).unwrap(),
         realised.credited - realised.withdrawn,
         "TotalAccounted must equal net credited-minus-withdrawn flow"
     );
